@@ -1,0 +1,50 @@
+# Función XOR
+function XOR-Encode {
+    param (
+        [byte[]]$data,
+        [byte[]]$key
+    )
+
+    $encoded = [byte[]]::new($data.Length)
+    for ($i = 0; $i -lt $data.Length; $i++) {
+        $encoded[$i] = $data[$i] -bxor $key[$i % $key.Length]
+    }
+    return $encoded
+}
+
+# Solicitar el archivo que deseas cifrar
+$inputFile = Read-Host "Introduce la ruta completa del archivo .ps1 que deseas cifrar"
+
+# Verificar si el archivo de entrada existe
+if (-Not (Test-Path $inputFile)) {
+    Write-Host "Error: El archivo $inputFile no existe."
+    exit 1
+}
+
+# Solicitar la clave para el cifrado
+$key = Read-Host "Introduce la clave que deseas utilizar para el cifrado"
+
+# Solicitar el archivo de salida
+$outputFile = Read-Host "Introduce el nombre del archivo de salida para el archivo cifrado"
+
+# Leer el contenido del archivo
+try {
+    $scriptContent = [System.IO.File]::ReadAllBytes($inputFile)
+} catch {
+    Write-Host "Error al leer el archivo $inputFile. Detalles: $_"
+    exit 1
+}
+
+# Clave para XOR en formato byte
+$keyBytes = [System.Text.Encoding]::UTF8.GetBytes($key)
+
+# Codificar el contenido del script
+$encodedScript = XOR-Encode -data $scriptContent -key $keyBytes
+
+# Guardar el contenido codificado en un nuevo archivo
+try {
+    [System.IO.File]::WriteAllBytes($outputFile, $encodedScript)
+    Write-Host "El archivo ha sido cifrado correctamente y guardado en: $outputFile"
+} catch {
+    Write-Host "Error al escribir el archivo $outputFile. Detalles: $_"
+}
