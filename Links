@@ -8,6 +8,8 @@ https://book.ghanim.no/?page_id=3977V
 
 https://blankshiro.xyz/posts/CRTO-Notes-2/
 
+https://github.com/chvancooten/OSEP-Code-Snippets/blob/main/MiniDump/MiniDump.ps1
+
 ./build.sh 49 WaitForSingleObject true none /tmp/dist/sleepmask
 
 
