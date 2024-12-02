@@ -1,8 +1,13 @@
 # Ejecutar PowerShell como administrador
-Stop-Service -Name "ElasticEndpoint" -Force
-& "C:\Program Files\Elastic\Endpoint\elastic-agent.exe" protection disable
+Stop-Service -Name "ElasticEndpoint" -Force & "C:\Program Files\Elastic\Endpoint\elastic-agent.exe" protection disable 
 Set-Service -Name "ElasticEndpoint" -StartupType Disabled
 Restart-Computer
 reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\ElasticEndpoint" /v Start /t REG_DWORD /d 4 /f
 sc delete ElasticEndpoint
 rm -Recurse -Force "C:\Program Files\Elastic\Endpoint"
+
+#Defender
+#Disable Window Defenders 
+reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection" /v DisableRealtimeMonitoring /t REG_DWORD /d 1 /f
+
+Uninstall-WindowsFeature -Name Windows-Defende
