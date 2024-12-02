@@ -14,13 +14,8 @@ https://github.com/chvancooten/OSEP-Code-Snippets/blob/main/MiniDump/MiniDump.ps
 
 ./build.sh 49 WaitForSingleObject true none /tmp/dist/sleepmask
 
-
-set_frame_info(&callstack[i++], L"KernelBase", 0, 0x39cee, 0, FALSE);
-set_frame_info(&callstack[i++], L"ntdll", 0, 0xa0154, 0, FALSE);
-set_frame_info(&callstack[i++], L"kernel32", 0, 0x1257d, 0, FALSE);
-set_frame_info(&callstack[i++], L"ntdll", 0, 0x5af08, 0, FALSE);
-
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12]
 
-
 nltest /dsgetdc:essos.local
+
+cat beacon_x64.ps1 | grep -oP "(?<=FromBase64String\(').*?(?='\))"
