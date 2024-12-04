@@ -34,3 +34,5 @@ cd \\maquina\c$
 upload
 smb1 paylod
 powershell .\smb1.ps1 -Verb RunAs
+
+Get-Service -Name Elastic*
