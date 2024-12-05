@@ -1,4 +1,3 @@
-```powershell
 # Inline (.NET) Execution con InlineExecute-Assembly
 
 # InlineExecute-Assembly permite cargar y ejecutar ensamblados .NET directamente en el proceso de Beacon sin necesidad de fork and run.
@@ -56,3 +55,4 @@ beacon> inlineExecute-Assembly --dotnetassembly C:\Tools\Rubeus\Rubeus\bin\Relea
 # - `--amsi`: Deshabilitar AMSI (Anti-Malware Scan Interface) durante la ejecución.
 # - `--etw`: Deshabilitar ETW (Event Tracing for Windows) para reducir la detección.
 # - La carga del CLR en el proceso puede generar eventos sospechosos dependiendo del contexto y del proceso utilizado por Beacon.
+
