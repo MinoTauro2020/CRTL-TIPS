@@ -19,8 +19,6 @@ openssl req -new -x509 -key ca.key -out ca.crt -days 365 -subj "/CN=My CA"
 # En tu máquina de ataque (client), genera una clave privada de 2048 bits:
 openssl genrsa -out private.key 2048
 
-chmod 644 ca.crt
-
 # 4. Crear una Solicitud de Firma de Certificado (CSR)
 # Luego, crea una solicitud de firma de certificado con esa clave:
 openssl req -new -key private.key -out request.csr
@@ -68,6 +66,13 @@ scp public.crt attacker@[redirector]:/home/attacker/
 sudo cp /home/attacker/private.key /etc/ssl/private/
 sudo cp /home/attacker/public.crt /etc/ssl/certs/
 
+# 10. Verificar los Permisos de los Archivos
+# Asegúrate de que los archivos tienen los permisos correctos:
+sudo chmod 600 /etc/ssl/private/private.key
+sudo chmod 644 /etc/ssl/certs/public.crt
+sudo chmod 644 /etc/ssl/certs/ca.crt
+
+# 11. Editar el Archivo de Configuración SSL de Apache
 # Edita el archivo de configuración SSL de Apache:
 sudo nano /etc/apache2/sites-enabled/default-ssl.conf
 
@@ -75,6 +80,7 @@ sudo nano /etc/apache2/sites-enabled/default-ssl.conf
 # ----------------------------------------
 # SSLCertificateFile /etc/ssl/certs/public.crt
 # SSLCertificateKeyFile /etc/ssl/private/private.key
+# SSLCertificateChainFile /etc/ssl/certs/ca.crt
 #
 # SSLProxyEngine on
 #
@@ -85,92 +91,10 @@ sudo nano /etc/apache2/sites-enabled/default-ssl.conf
 # </Directory>
 # ----------------------------------------
 
-# 10. Reiniciar Apache
+# 12. Reiniciar Apache
 # Finalmente, reinicia Apache para aplicar los cambios:
 sudo systemctl restart apache2
 
-# 11. Verificar la Configuración del Certificado
+# 13. Verificar la Configuración del Certificado
 # Abre tu navegador y visita https://[redirector] para verificar que el certificado está funcionando correctamente.
 
-# 9. Verificar la Configuración del Certificado
-# Abre tu navegador y visita https://[redirector] para verificar que el certificado está funcionando correctamente.
-
-# SSH Tunnel (HTTPS)
-# En el cliente (attacker), copia el certificado:
-scp localhost.crt attacker@[redirector]:/home/attacker/
-
-# En el redirector, instala el certificado y actualiza:
-sudo cp localhost.crt /usr/local/share/ca-certificates/
-sudo update-ca-certificates
-
-# Verifica el túnel:
-curl -v https://localhost:8443/r1   # Debería funcionar sin error
-curl -v -k https://[attacker]      # Debería fallar
-
-# Configura el túnel SSH en el cliente:
-ssh -N -R 8443:localhost:443 attacker@[redirector]
-
-# AutoSSH en el cliente (attacker), edita la configuración SSH:
-nano ~/.ssh/config
-# ----------------------------------------
-# Host                 redirector-1
-# HostName             10.10.0.100
-# User                 attacker
-# Port                 22
-# IdentityFile         /home/attacker/.ssh/id_rsa
-# RemoteForward        8443 localhost:443
-# ServerAliveInterval  30
-# ServerAliveCountMax  3
-# ----------------------------------------
-autossh -M 0 -f -N redirector-1
-
-# SSH Tunnel (DNS)
-# Configura el túnel SSH para DNS:
-ssh -N -R 5353:localhost:5353 attacker@[redirector]
-
-# En el redirector, usa `socat` para redirigir las peticiones:
-sudo socat tcp-listen:5353,reuseaddr,fork udp4-sendto:localhost:53
-sudo socat udp4-listen:53,reuseaddr,fork tcp:localhost:5353,retry,forever
-
-# Agrega comandos `socat` al cron:
-sudo nano /etc/cron.d/redirect
-# ----------------------------------------
-# @reboot root sudo socat tcp-listen:5353,reuseaddr,fork udp4-sendto:localhost:53
-# ----------------------------------------
-
-# AutoSSH en el cliente (attacker), edita la configuración SSH:
-nano ~/.ssh/config
-# ----------------------------------------
-# Host                 redirector-2
-# HostName             10.10.0.200
-# User                 attacker
-# Port                 22
-# IdentityFile         /home/attacker/.ssh/id_rsa
-# RemoteForward        5353 localhost:5353
-# ServerAliveInterval  30
-# ServerAliveCountMax  3
-# ----------------------------------------
-autossh -M 0 -f -N redirector-2
-
-# Startup Service
-# Crea un servicio de inicio para cada redirector:
-sudo nano /etc/systemd/system/redirector.service
-# ----------------------------------------
-# [Unit]
-# Description=SSH Tunnel to Redirector
-#
-# [Service]
-# Type=forking
-# User=attacker
-# Restart=always
-# RestartSec=1
-# ExecStart=/usr/bin/autossh -M 0 -f -N redirector
-#
-# [Install]
-# WantedBy=multi-user.target
-# ----------------------------------------
-
-# Habilita y arranca el servicio:
-sudo systemctl daemon-reload
-sudo systemctl enable redirector.service
-sudo systemctl start redirector.service
